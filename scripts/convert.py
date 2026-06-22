@@ -114,10 +114,13 @@ def main() -> None:
     print(f"\n输出目录: {out_dir.resolve()}\n")
 
     # --- 转换 ---
+    # 构建源文件名 -> 源文件路径的映射（用于匹配返回结果）
+    source_map = {Path(s).name: s for s in sources}
+
     client = MinerU(token=api_token)
     try:
         print(f"[START] 提交 {len(sources)} 个文件...")
-        for i, result in enumerate(client.extract_batch(
+        results_list = list(client.extract_batch(
             sources,
             ocr=None if args.no_ocr else True,
             formula=None if args.no_formula else True,
@@ -125,18 +128,24 @@ def main() -> None:
             language=args.language,
             model=args.model,
             timeout=args.timeout,
-        )):
-            basename = Path(sources[i]).stem
-            print(f"\n[{i+1}/{len(sources)}] {basename}")
+        ))
+
+        # MinerU API 并行处理文件，返回顺序可能与提交顺序不一致。
+        # 使用 result.filename 匹配回源文件，确保输出命名正确。
+        for idx, result in enumerate(results_list):
+            # 优先用 result.filename 匹配，找不到时回退到索引
+            src_filename = getattr(result, "filename", None) or Path(sources[idx]).name
+            src_path = source_map.get(src_filename, sources[idx])
+            basename = Path(src_path).stem
+
+            print(f"\n[{idx+1}/{len(results_list)}] {basename} (源文件: {src_filename})")
             print(f"   状态: {result.state}")
 
             if result.state == "done":
-                # 保存 Markdown
                 md_path = out_dir / f"{basename}.md"
                 saved = result.save_markdown(str(md_path), with_images=True)
                 print(f"   [OK] Markdown: {saved}")
 
-                # 保存完整导出包
                 zip_dir = out_dir / basename
                 result.save_all(str(zip_dir))
                 print(f"   [OK] 导出包已保存到: {zip_dir}/")
